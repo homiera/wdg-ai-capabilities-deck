@@ -5,6 +5,10 @@ on:
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
@@ -22,7 +26,29 @@ jobs:
           node-version: 20
       - run: npm ci
       - run: npm run build
-      - run: cp dist/index.html dist/404.html
+      - name: Inject basename router shim and create 404 fallback
+        env:
+          REPO_NAME: ${{ github.event.repository.name }}
+        run: |
+          node - << 'EOF'
+          const fs = require('fs');
+          const base = '/' + process.env.REPO_NAME;
+          const script = `<script>
+          (function(){
+            var b='${base}',_p=history.pushState.bind(history),_r=history.replaceState.bind(history);
+            function wb(u){return(!u||typeof u!='string'||u.startsWith('http')||u.startsWith('//')||u.startsWith(b))?u:b+(u.startsWith('/')?u:'/'+u);}
+            history.pushState=function(s,t,u){return _p(s,t,wb(u));};
+            history.replaceState=function(s,t,u){return _r(s,t,wb(u));};
+            var p=location.pathname;
+            if(p===b||p.startsWith(b+'/')){_r(history.state,'',p.slice(b.length)||'/');}
+            window.addEventListener('load',function(){setTimeout(function(){var p=location.pathname;if(!p.startsWith(b))_r(history.state,'',b+(p==='/'?'':p));},0);});
+          })();
+          </script>`;
+          let html = fs.readFileSync('dist/index.html', 'utf8');
+          html = html.replace('<head>', '<head>' + script);
+          fs.writeFileSync('dist/index.html', html);
+          fs.writeFileSync('dist/404.html', html);
+          EOF
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
